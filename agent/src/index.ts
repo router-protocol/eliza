@@ -15,7 +15,9 @@ import { DirectClient } from "@elizaos/client-direct";
 import { agentKitPlugin } from "@elizaos/plugin-agentkit";
 // import { ReclaimAdapter } from "@elizaos/plugin-reclaim";
 import { PrimusAdapter } from "@elizaos/plugin-primus";
+import { lightningPlugin } from "@elizaos/plugin-lightning";
 import { elizaCodeinPlugin, onchainJson } from "@elizaos/plugin-iq6900";
+import { holdstationPlugin } from "@elizaos/plugin-holdstation";
 
 import {
     AgentRuntime,
@@ -106,8 +108,10 @@ import { hyperliquidPlugin } from "@elizaos/plugin-hyperliquid";
 import { echoChambersPlugin } from "@elizaos/plugin-echochambers";
 import { dexScreenerPlugin } from "@elizaos/plugin-dexscreener";
 import { pythDataPlugin } from "@elizaos/plugin-pyth-data";
+
 import { openaiPlugin } from '@elizaos/plugin-openai';
 import nitroPlugin from "@elizaos/plugin-router-nitro";
+import { devinPlugin } from '@elizaos/plugin-devin';
 
 
 import { zksyncEraPlugin } from "@elizaos/plugin-zksync-era";
@@ -210,7 +214,9 @@ export async function loadCharacterFromOnchain(): Promise<Character[]> {
 
         // .id isn't really valid
         const characterId = character.id || character.name;
-        const characterPrefix = `CHARACTER.${characterId.toUpperCase().replace(/ /g, "_")}.`;
+        const characterPrefix = `CHARACTER.${characterId
+            .toUpperCase()
+            .replace(/ /g, "_")}.`;
 
         const characterSettings = Object.entries(process.env)
             .filter(([key]) => key.startsWith(characterPrefix))
@@ -282,7 +288,9 @@ async function jsonToCharacter(
 
     // .id isn't really valid
     const characterId = character.id || character.name;
-    const characterPrefix = `CHARACTER.${characterId.toUpperCase().replace(/ /g, "_")}.`;
+    const characterPrefix = `CHARACTER.${characterId
+        .toUpperCase()
+        .replace(/ /g, "_")}.`;
     const characterSettings = Object.entries(process.env)
         .filter(([key]) => key.startsWith(characterPrefix))
         .reduce((settings, [key, value]) => {
@@ -383,17 +391,39 @@ function commaSeparatedStringToArray(commaSeparated: string): string[] {
     return commaSeparated?.split(",").map((value) => value.trim());
 }
 
+async function readCharactersFromStorage(characterPaths: string[]): Promise<string[]> {
+    try {
+        const uploadDir = path.join(process.cwd(), "data", "characters");
+        await fs.promises.mkdir(uploadDir, { recursive: true });
+        const fileNames = await fs.promises.readdir(uploadDir);
+        fileNames.forEach(fileName => {
+            characterPaths.push(path.join(uploadDir, fileName));
+        });
+    } catch (err) {
+        elizaLogger.error(`Error reading directory: ${err.message}`);
+    }
+
+    return characterPaths;
+};
+
 export async function loadCharacters(
     charactersArg: string
 ): Promise<Character[]> {
-    const characterPaths = commaSeparatedStringToArray(charactersArg);
+
+    let characterPaths = commaSeparatedStringToArray(charactersArg);
+
+    if(process.env.USE_CHARACTER_STORAGE === "true") {
+        characterPaths = await readCharactersFromStorage(characterPaths);
+    }
+
     const loadedCharacters: Character[] = [];
 
     if (characterPaths?.length > 0) {
         for (const characterPath of characterPaths) {
             try {
-                const character: Character =
-                    await loadCharacterTryPath(characterPath);
+                const character: Character = await loadCharacterTryPath(
+                    characterPath
+                );
                 loadedCharacters.push(character);
             } catch (e) {
                 process.exit(1);
@@ -1052,8 +1082,20 @@ export async function createAgent(
             getSecret(character, "PYTH_MAINNET_PROGRAM_KEY")
                 ? pythDataPlugin
                 : null,
-            getSecret(character, "OPENAI_API_KEY") && getSecret(character, "ENABLE_OPEN_AI_COMMUNITY_PLUGIN")
+            getSecret(character, "LND_TLS_CERT") &&
+            getSecret(character, "LND_MACAROON") &&
+            getSecret(character, "LND_SOCKET")
+                ? lightningPlugin
+                : null,
+            getSecret(character, "OPENAI_API_KEY") &&
+            getSecret(character, "ENABLE_OPEN_AI_COMMUNITY_PLUGIN")
                 ? openaiPlugin
+                : null,
+            getSecret(character, "DEVIN_API_TOKEN")
+                ? devinPlugin
+                : null,
+            getSecret(character, "HOLDSTATION_PRIVATE_KEY")
+                ? holdstationPlugin
                 : null,
         ].filter(Boolean),
         providers: [],
@@ -1232,7 +1274,9 @@ const startAgents = async () => {
         characters = await loadCharacterFromOnchain();
     }
 
-    if ((!onchainJson && charactersArg) || hasValidRemoteUrls()) {
+    const notOnchainJson = !onchainJson || onchainJson == "null";
+
+  if ((notOnchainJson && charactersArg) || hasValidRemoteUrls()) {
         characters = await loadCharacters(charactersArg);
     }
 
@@ -1298,4 +1342,3 @@ if (
         console.error("unhandledRejection", err);
     });
 }
-
