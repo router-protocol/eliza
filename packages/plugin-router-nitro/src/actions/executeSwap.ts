@@ -154,7 +154,7 @@ export const executeSwapAction = {
             }
         } catch (error) {
             elizaLogger.log(`Error during executing swap: ${error.message}`);
-            callback?.({ text: `Error during swap:` });
+            callback?.({ text: `Error during swap: ${error.message}` });
             return false;
         }
         return true;
