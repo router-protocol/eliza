@@ -107,6 +107,8 @@ import { echoChambersPlugin } from "@elizaos/plugin-echochambers";
 import { dexScreenerPlugin } from "@elizaos/plugin-dexscreener";
 import { pythDataPlugin } from "@elizaos/plugin-pyth-data";
 import { openaiPlugin } from '@elizaos/plugin-openai';
+import nitroPlugin from "@elizaos/plugin-router-nitro";
+
 
 import { zksyncEraPlugin } from "@elizaos/plugin-zksync-era";
 import Database from "better-sqlite3";
@@ -556,7 +558,7 @@ export function getTokenForProvider(
         case ModelProviderName.ATOMA:
              return (
                  character.settings?.secrets?.ATOMASDK_BEARER_AUTH ||
-                 settings.ATOMASDK_BEARER_AUTH
+                 settings.ATOMASDK_BEARER_AUTH);
         case ModelProviderName.NVIDIA:
             return (
                 character.settings?.secrets?.NVIDIA_API_KEY ||
