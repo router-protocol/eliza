@@ -157,6 +157,8 @@ export class ChainUtils {
     processChainSwap(fromChain: string, toChain: string): {
         fromChainId: string | null;
         toChainId: string | null;
+        fromChainIdType: string | null;
+        toChainIdType: string | null;
     } {
         const sourceChain = this.validateChain(fromChain);
         const destChain = this.validateChain(toChain);
@@ -179,7 +181,9 @@ export class ChainUtils {
 
         return {
             fromChainId: sourceChain.chainId,
-            toChainId: destChain.chainId
+            toChainId: destChain.chainId,
+            fromChainIdType: sourceChain.type,
+            toChainIdType: destChain.type
         };
     }
 }
