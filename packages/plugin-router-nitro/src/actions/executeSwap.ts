@@ -78,14 +78,14 @@ export const executeSwapAction = {
                 return false;
             }
             else {
-                const fromTokenConfig = await fetchTokenConfig(Number(swapDetails.fromChainId), fromToken);
-                const toTokenConfig = await fetchTokenConfig(Number(swapDetails.toChainId), toToken);
+                const fromTokenConfig = await fetchTokenConfig(swapDetails.fromChainId, fromToken);
+                const toTokenConfig = await fetchTokenConfig(swapDetails.toChainId, toToken);
                 let amountIn = BigInt(Math.floor(Number(amount) * Math.pow(10, fromTokenConfig.decimals)));
                 console.log(`Amount to swap: ${amountIn}`);
 
                 if (fromTokenConfig.address.toLowerCase() == "0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee") {
                     const userBalance = await checkNativeTokenBalance(wallet, fromTokenConfig.decimals);
-           if (BigInt(userBalance) < amountIn) {
+                    if (BigInt(userBalance) < amountIn) {
                         elizaLogger.log("Insufficient balance to perform the swap");
                         callback?.({ text: `Insufficient balance to perform the swap` });
                         return false;
@@ -93,7 +93,7 @@ export const executeSwapAction = {
                 }
                 else {
                     const userBalance = await checkUserBalance(wallet, fromTokenConfig.address, fromTokenConfig.decimals);
-           if (BigInt(userBalance) < amountIn) {
+                    if (BigInt(userBalance) < amountIn) {
                         elizaLogger.log("Insufficient balance to perform the swap");
                         callback?.({ text: `Insufficient balance to perform the swap` });
                         return false;
@@ -103,13 +103,13 @@ export const executeSwapAction = {
                 const pathfinderParams = {
                     fromTokenAddress: fromTokenConfig.address,
                     toTokenAddress: toTokenConfig.address,
-                    amount: (amountIn).toString(), 
-                    fromTokenChainId: Number(swapDetails.fromChainId),
-                    toTokenChainId: Number(swapDetails.toChainId),
+                    amount: (amountIn).toString(),
+                    fromTokenChainId: swapDetails.fromChainId,
+                    toTokenChainId: swapDetails.toChainId,
                     partnerId: 127,
                 };
                 // console.log("Pathfinder Params: ", pathfinderParams);
-       const pathfinderResponse = await fetchPathfinderQuote(pathfinderParams);
+                const pathfinderResponse = await fetchPathfinderQuote(pathfinderParams);
                 if (pathfinderResponse) {
                     let destinationData = pathfinderResponse.destination;
                     const amountOut = BigInt(destinationData.tokenAmount);
@@ -117,12 +117,12 @@ export const executeSwapAction = {
                     const normalizedAmountOut = Number(amountOut) / decimals;
                     elizaLogger.log(`Quote: ${normalizedAmountOut}`);
 
-                     await checkAndSetAllowance(
-                         wallet,
-                         fromTokenConfig.address,
-                         pathfinderResponse.allowanceTo,
-                         amountIn
-                     );
+                    await checkAndSetAllowance(
+                        wallet,
+                        fromTokenConfig.address,
+                        pathfinderResponse.allowanceTo,
+                        amountIn
+                    );
                     const txResponse = await getSwapTransaction(pathfinderResponse, address, toAddress);
 
                     const tx = await wallet.sendTransaction(txResponse.txn)

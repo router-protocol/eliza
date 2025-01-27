@@ -198,7 +198,7 @@ export async function fetchChains(): Promise<any> {
 
 const tokenCache: { [key: string]: any } = {};
 
-export async function fetchTokenConfig(chainId: number, token: string): Promise<any> {
+export async function fetchTokenConfig(chainId: string, token: string): Promise<any> {
     const cacheKey = `${chainId}-${token.toLowerCase()}`;
 
     // Check if the token config is already cached
@@ -237,27 +237,34 @@ interface PathfinderQuoteParams {
     fromTokenAddress: string;
     toTokenAddress: string;
     amount: string;
-    fromTokenChainId: number;
-    toTokenChainId: number;
+    fromTokenChainId: string;
+    toTokenChainId: string;
     partnerId: number;
 }
 
 export async function fetchPathfinderQuote(params: PathfinderQuoteParams): Promise<any> {
     const { fromTokenAddress, toTokenAddress, amount, fromTokenChainId, toTokenChainId, partnerId } = params;
 
-    const pathfinderUrl = `https://api-beta.pathfinder.routerprotocol.com/api/v2/quote` +
-        `?fromTokenAddress=${fromTokenAddress}` +
-        `&toTokenAddress=${toTokenAddress}` +
-        `&amount=${amount}` +
-        `&fromTokenChainId=${fromTokenChainId}` +
-        `&toTokenChainId=${toTokenChainId}` +
-        `&partnerId=${partnerId}`;
+    const args = new URLSearchParams({
+        fromTokenAddress,
+        toTokenAddress,
+        amount,
+        fromTokenChainId: fromTokenChainId.toString(),
+        toTokenChainId: toTokenChainId.toString(),
+        partnerId: partnerId.toString(),
+    });
+    const pathfinderUrl = `https://api-beta.pathfinder.routerprotocol.com/api/v2/quote?${args.toString()}`;
 
     try {
         const response = await axios.get(pathfinderUrl);
         return response.data;
-    } catch (error) {
-        console.error("Error fetching Pathfinder quote:", error.message);
-        throw new Error(`Pathfinder API call failed: ${error.message}`);
+    } catch (error: any) {
+        if (error.response) {
+            throw new Error(`Unable to get quote, failed with status ${error.response.status}: ${JSON.stringify(error.response.data)}`);
+        } else {
+            console.error("Error fetching Pathfinder quote:", error.message);
+            throw new Error(`Unable to get quote: ${error.message}`);
+        }
     }
 }
+
