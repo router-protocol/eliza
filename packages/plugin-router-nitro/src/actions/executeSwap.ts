@@ -1,6 +1,7 @@
 import {
     composeContext,
     elizaLogger,
+    generateMessageResponse,
     generateObjectDeprecated,
     HandlerCallback,
     IAgentRuntime,
@@ -9,11 +10,8 @@ import {
     State
 } from "@elizaos/core";
 import { swapTemplate } from "./swapTemplate.ts";
-import { ChainUtils, fetchChains, fetchPathfinderQuote, fetchTokenConfig } from "./utils.ts";
+import { ChainUtils, fetchChains } from "./utils.ts";
 import { validateRouterNitroConfig } from "../environment.ts";
-import { checkAndSetAllowance, checkNativeTokenBalance, checkUserBalance, getSwapTransaction } from "./txns.ts";
-import { ethers } from "ethers";
-import { getBlockExplorerFromChainId, getRpcUrlFromChainId } from "./chains.ts";
 
 export { swapTemplate };
 
@@ -57,107 +55,87 @@ export const executeSwapAction = {
         }
 
         const { fromChain, toChain, fromToken, toToken, amount, toAddress } = content;
+        const missingParams = [];
+
+        if (!content.fromChain) missingParams.push('fromChain');
+        if (!content.toChain) missingParams.push('toChain');
+        if (!content.fromToken) missingParams.push('fromToken');
+        if (!content.toToken) missingParams.push('toToken');
+        if (!content.amount) missingParams.push('amount');
+
+        if (missingParams.length > 0) {
+            const missingParamMessage = `Missing specific swap parameters: ${missingParams.join(', ')} Please provide the entire prompt.`;
+            elizaLogger.log(missingParamMessage);
+
+            callback?.({
+                text: missingParamMessage
+            });
+            return false;
+        }
 
         try {
             const apiResponse = await fetchChains();
             const chainUtils = new ChainUtils(apiResponse);
+
             const swapDetails = chainUtils.processChainSwap(fromChain, toChain);
             elizaLogger.log(`Chain Data Details: ${JSON.stringify(swapDetails)}`);
-
-            let privateKey = runtime.getSetting("ROUTER_NITRO_EVM_PRIVATE_KEY");
-            if (!privateKey) {
-                throw new Error("Private key is missing. Please set ROUTER_NITRO_EVM_PRIVATE_KEY in the environment settings.");
-            }
-            let rpc = getRpcUrlFromChainId(swapDetails.fromChainId);
-            let provider = new ethers.JsonRpcProvider(rpc);
-            let wallet = new ethers.Wallet(privateKey, provider);
-            let address = await wallet.getAddress();
 
             if (!swapDetails.fromChainId || !swapDetails.toChainId) {
                 elizaLogger.log("Invalid chain data details");
                 return false;
             }
             else {
-                const fromTokenConfig = await fetchTokenConfig(swapDetails.fromChainId, fromToken);
-                const toTokenConfig = await fetchTokenConfig(swapDetails.toChainId, toToken);
-                let amountIn = BigInt(Math.floor(Number(amount) * Math.pow(10, fromTokenConfig.decimals)));
-                console.log(`Amount to swap: ${amountIn}`);
+                // if (fromTokenConfig.address.toLowerCase() == "0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee") {
+                //     const userBalance = await checkNativeTokenBalance(wallet, fromTokenConfig.decimals);
+                //     if (BigInt(userBalance) < amountIn) {
+                //         elizaLogger.log("Insufficient balance to perform the swap");
+                //         callback?.({ text: `Insufficient balance to perform the swap` });
+                //         return false;
+                //     }
+                // }
+                // else {
+                //     const userBalance = await checkUserBalance(wallet, fromTokenConfig.address, fromTokenConfig.decimals);
+                //     if (BigInt(userBalance) < amountIn) {
+                //         elizaLogger.log("Insufficient balance to perform the swap");
+                //         callback?.({ text: `Insufficient balance to perform the swap` });
+                //         return false;
+                //     }
+                // }
 
-                if (fromTokenConfig.address.toLowerCase() == "0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee") {
-                    const userBalance = await checkNativeTokenBalance(wallet, fromTokenConfig.decimals);
-                    if (BigInt(userBalance) < amountIn) {
-                        elizaLogger.log("Insufficient balance to perform the swap");
-                        callback?.({ text: `Insufficient balance to perform the swap` });
-                        return false;
+                const confirmationMessage = `Swap Details:
+                - From: ${fromToken} on ${fromChain}
+                - To: ${toToken} on ${toChain}
+                - Amount In: ${amount} ${fromToken}
+                - Destination Address: ${toAddress || 'Default wallet'}
+
+                Confirm swap? (Yes/No)`;
+
+                await runtime.updateRecentMessageState({
+                    ...state,
+                    swapContext: {
+                        fromChain,
+                        toChain,
+                        fromToken,
+                        toToken,
+                        amount,
+                        toAddress
                     }
-                }
-                else {
-                    const userBalance = await checkUserBalance(wallet, fromTokenConfig.address, fromTokenConfig.decimals);
-                    if (BigInt(userBalance) < amountIn) {
-                        elizaLogger.log("Insufficient balance to perform the swap");
-                        callback?.({ text: `Insufficient balance to perform the swap` });
-                        return false;
-                    }
-                }
+                });
 
-                const pathfinderParams = {
-                    fromTokenAddress: fromTokenConfig.address,
-                    toTokenAddress: toTokenConfig.address,
-                    amount: (amountIn).toString(),
-                    fromTokenChainId: Number(swapDetails.fromChainId),
-                    toTokenChainId: Number(swapDetails.toChainId),
-                    partnerId: 127,
-                };
-                // console.log("Pathfinder Params: ", pathfinderParams);
-                const pathfinderResponse = await fetchPathfinderQuote(pathfinderParams);
-                if (pathfinderResponse) {
-                    let destinationData = pathfinderResponse.destination;
-                    const amountOut = BigInt(destinationData.tokenAmount);
-                    const decimals = Math.pow(10, destinationData.asset.decimals);
-                    const normalizedAmountOut = Number(amountOut) / decimals;
-                    elizaLogger.log(`Quote: ${normalizedAmountOut}`);
+                // Trigger callback for user confirmation
+                callback?.({
+                    text: confirmationMessage,
+                    action: "SWAP_CONFIRM"
+                });
 
-                    await checkAndSetAllowance(
-                        wallet,
-                        fromTokenConfig.address,
-                        pathfinderResponse.allowanceTo,
-                        amountIn
-                    );
-                    const txResponse = await getSwapTransaction(pathfinderResponse, address, toAddress);
-
-                    const tx = await wallet.sendTransaction(txResponse.txn)
-                    try {
-                        await tx.wait();
-                        const blockExplorerUrl = getBlockExplorerFromChainId(swapDetails.fromChainId).url;
-                        if (blockExplorerUrl) {
-                            const txExplorerUrl = `${blockExplorerUrl}/tx/${tx.hash}`;
-                            elizaLogger.log(`Transaction Explorer URL: ${txExplorerUrl}`);
-                            callback?.({
-                                text:
-                                    "Swap completed successfully! Txn: " +
-                                    txExplorerUrl,
-                            });
-                            return true;
-
-                        } else {
-                            callback?.({
-                                text:
-                                    "Swap completed successfully! Txn: " +
-                                    tx.hash,
-                            });
-                        }
-                    }
-                    catch (error) {
-                        console.log(`Transaction failed with error: ${error}`)
-                    }
-                }
+                // Pause execution and wait for user confirmation
+                return false;
             }
         } catch (error) {
             elizaLogger.log(`Error during executing swap: ${error.message}`);
-            callback?.({ text: `Error during swap: ${error.message}` });
+            callback?.({ text: `Error during swap:  ${error.message}` });
             return false;
         }
-        return true;
     },
     template: swapTemplate,
     validate: async (runtime: IAgentRuntime) => {
@@ -190,6 +168,34 @@ export const executeSwapAction = {
             {
                 user: "{{user1}}",
                 content: {
+                    text: "Bridge 1 ETH from Ethereum to Base on address 0xCCa8009f5e09F8C5dB63cb0031052F9CB635Af62",
+                },
+            },
+            {
+                user: "{{agent}}",
+                content: {
+                    text: "Sure, I'll send 1 ETH from Ethereum to Base",
+                    action: "ROUTER_NITRO_SWAP",
+                },
+            },
+            {
+                user: "{{agent}}",
+                content: {
+                    text: "Confirm the details of the swap",
+                    action: "SWAP_CONFIRM"
+                },
+            },
+            {
+                user: "{{agent}}",
+                content: {
+                    text: "Successfully sent 1 ETH to 0xCCa8009f5e09F8C5dB63cb0031052F9CB635Af62 on Base\nTransaction: 0x4fed598033f0added272c3ddefd4d83a521634a738474400b27378db462a76ec",
+                },
+            },
+        ],
+        [
+            {
+                user: "{{user1}}",
+                content: {
                     text: "Please swap 1 ETH into USDC from Avalanche to Base on address 0xF43042865f4D3B32A19ECBD1C7d4d924613c41E8",
                 },
             },
@@ -198,6 +204,13 @@ export const executeSwapAction = {
                 content: {
                     text: "Sure, I'll swap 1 ETH into USDC from Solana to Base on address 0xF43042865f4D3B32A19ECBD1C7d4d924613c41E8",
                     action: "ROUTER_NITRO_SWAP",
+                },
+            },
+            {
+                user: "{{agent}}",
+                content: {
+                    text: "Confirm the details of the swap",
+                    action: "SWAP_CONFIRM"
                 },
             },
             {
@@ -224,6 +237,13 @@ export const executeSwapAction = {
             {
                 user: "{{agent}}",
                 content: {
+                    text: "Confirm the details of the swap",
+                    action: "SWAP_CONFIRM"
+                },
+            },
+            {
+                user: "{{agent}}",
+                content: {
                     text: "Successfully sent 100 UNI to 0xCCa8009f5e09F8C5dB63cb0031052F9CB635Af62 on Ethereum\nTransaction: 0x4fed598033f0added272c3ddefd4d83a521634a738474400b27378db462a76ec",
                 },
             },
@@ -241,6 +261,13 @@ export const executeSwapAction = {
                     "text": "Sure, I'll transfer 50 AAVE from Polygon to Optimism",
                     "action": "ROUTER_NITRO_SWAP",
                 }
+            },
+            {
+                user: "{{agent}}",
+                content: {
+                    text: "Confirm the details of the swap",
+                    action: "SWAP_CONFIRM"
+                },
             },
             {
                 "user": "{{agent}}",
@@ -262,6 +289,13 @@ export const executeSwapAction = {
                     "text": "Sure, I'll send 1000 USDT from Ethereum to Arbitrum",
                     "action": "ROUTER_NITRO_SWAP",
                 }
+            },
+            {
+                user: "{{agent}}",
+                content: {
+                    text: "Confirm the details of the swap",
+                    action: "SWAP_CONFIRM"
+                },
             },
             {
                 "user": "{{agent}}",
